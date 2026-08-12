@@ -1,0 +1,9 @@
+# Ignore C# compilation output directories
+[Bb]in/
+[Oo]bj/
+
+# Ignore IDE and OS temporary or generated files
+.vscode/
+*.user
+*.suo
+.DS_Store
