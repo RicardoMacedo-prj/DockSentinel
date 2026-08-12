@@ -33,7 +33,7 @@ var handler = new SocketsHttpHandler
 var client = new HttpClient(handler);
 
 // Set the base HTTP address used when making requests.
-client.BaseAddress = new Uri("http://localhost");
+client.BaseAddress = new Uri("http://127.0.0.1");
 
 // Request a list of all Docker containers, including stopped containers.
 var response = await client.GetAsync("containers/json?all=1");
