@@ -9,12 +9,23 @@ bool simulateOnly = true;
 // Set the path to the Unix socket used to communicate with Docker.
 var socketPath = "/var/run/docker.sock";
 
+// Prevent execution if the socket file is missing from the container's filesystem.
+if (!System.IO.File.Exists(socketPath))
+{
+    Console.WriteLine($"[FATAL] The Docker socket file does not exist at '{socketPath}'.");
+    Console.WriteLine("Ensure the container is executed with the mount flag: -v /var/run/docker.sock:/var/run/docker.sock");
+    return;
+}
+
 // Create an endpoint using the Docker socket path.
 var endpoint = new UnixDomainSocketEndPoint(socketPath);
 
 // Create an HTTP handler with a custom connection method.
 var handler = new SocketsHttpHandler
 {
+    // Disable internal .NET proxy routing to prevent IP hijacking in minimal OS environments.
+    UseProxy = false,
+    
     // Create a Unix socket and connects it to the Docker socket.
     ConnectCallback = async (context, token) =>
     {

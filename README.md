@@ -8,7 +8,7 @@ The tool reads the state of all containers, finds the ones that are stopped (sta
 
 ## Key Features
 
-* **Small Size (Native AOT):** The program is compiled directly into a native Linux binary. The final Docker image is less than 20MB.
+* **Small Size (Native AOT):** The program is compiled directly into a native Linux binary. The final Docker image is less than 30MB.
 * **No .NET Runtime Needed:** The container does not require the large .NET SDK or runtime to execute.
 * **Direct Socket Connection:** It sends HTTP requests directly into the `.sock` file, bypassing standard network ports.
 * **Safe JSON Reading:** Uses C# Source Generation to extract only the needed data (ID and State) without causing native compilation errors.
