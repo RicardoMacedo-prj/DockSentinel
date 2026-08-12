@@ -1,4 +1,5 @@
-﻿using System.Net.Sockets;
+﻿using System.ComponentModel;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -45,7 +46,7 @@ var rawJson = await response.Content.ReadAsStringAsync();
 
 // Parse the JSON string into a structured list of ContainerInfo objects
 // using the compile-time generated context to guarantee AOT compatibility and prevent trimming.
-var containers = JsonSerializer.Deserialize<List<ContainerInfo>>(rawJson)
+var containers = JsonSerializer.Deserialize(rawJson, ContainerJsonContext.Default.ListContainerInfo) 
                  ?? new List<ContainerInfo>();
 
 // Iterate through the list of deserialized containers.
@@ -86,4 +87,10 @@ public class ContainerInfo
 
     [JsonPropertyName("State")]
     public string State {get; set; } = string.Empty;
+}
+
+// Instructs the compiler to generate AOT-safe JSON serialization code for the specified type during build time.
+[JsonSerializable(typeof(List<ContainerInfo>))]
+internal partial class ContainerJsonContext : JsonSerializerContext
+{
 }
