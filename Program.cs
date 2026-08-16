@@ -6,11 +6,12 @@ using System.Text.Json.Serialization;
 // Set the execution mode. True prevents actual deletion.
 bool simulateOnly = true;
 
+
 // Set the path to the Unix socket used to communicate with Docker.
 var socketPath = "/var/run/docker.sock";
 
 // Prevent execution if the socket file is missing from the container's filesystem.
-if (!System.IO.File.Exists(socketPath))
+if (!File.Exists(socketPath))
 {
     Console.WriteLine($"[FATAL] The Docker socket file does not exist at '{socketPath}'.");
     Console.WriteLine("Ensure the container is executed with the mount flag: -v /var/run/docker.sock:/var/run/docker.sock");
@@ -60,14 +61,45 @@ var rawJson = await response.Content.ReadAsStringAsync();
 var containers = JsonSerializer.Deserialize(rawJson, ContainerJsonContext.Default.ListContainerInfo) 
                  ?? new List<ContainerInfo>();
 
-// Iterate through the list of deserialized containers.
+// Iterate through all deserialized containers to calculate and display their ID, state, and inactivity time.
 foreach (var container in containers)
 {
-    // Print the first 12 characters of the ID and the container state to the console.
-    Console.WriteLine($"ID: {container.Id.Substring(0, 12)} | State: {container.State}");
+    ContainerInspect? inspectContainer = null;
 
-    // Target containers that are stopped.
+    // Target containers that exited
     if (container.State == "exited")
+    {
+        // Request detailed state information for the stopped container.
+        var inspectResponse = await client.GetAsync($"containers/{container.Id}/json");
+
+        // Throw an exception if Docker returns an unsuccessful response.
+        inspectResponse.EnsureSuccessStatusCode();
+
+        // Read Docker's response as a JSON string.
+        var inspectJson = await inspectResponse.Content.ReadAsStringAsync();
+
+        // Parse the JSON string into a structured ContainerState object
+        inspectContainer = JsonSerializer.Deserialize(inspectJson, ContainerJsonContext.Default.ContainerInspect);
+
+        // Skip the container if the response could not be deserialized.
+        if (inspectContainer is null) continue;
+
+        // Calculate how long ago the container exited.
+        container.TimeSinceExit = DateTime.UtcNow - inspectContainer.State.FinishedAt;
+
+    }
+    // Display the container ID (first 12 characters), current state, and inactivity time.
+    Console.WriteLine($"ID: {container.Id.Substring(0, 12)} | State: {container.State} | Inactivity Time: {container.TimeSinceExit}");
+}
+
+Console.WriteLine();
+
+// Iterate through all deserialized containers to process stopped containers
+// that have been inactive for at least 15 days.
+foreach (var container in containers)
+{
+    // Target containers that are stopped and have at least 15 days of inactivity.
+    if (container.State == "exited" && container.TimeSinceExit >= TimeSpan.FromDays(15))
     {
         if (simulateOnly)
         {
@@ -93,15 +125,29 @@ foreach (var container in containers)
 
 public class ContainerInfo
 {
-    [JsonPropertyName("Id")]
     public string Id {get; set; } = string.Empty;
-
-    [JsonPropertyName("State")]
     public string State {get; set; } = string.Empty;
+
+    [JsonIgnore]
+    public TimeSpan? TimeSinceExit { get; set; }
+}
+
+public class ContainerInspect
+{
+    public ContainerState State { get; set; } = new();
+}
+
+public class ContainerState
+{
+    public string Status { get; set; } = string.Empty;
+    public int ExitCode { get; set; }
+    public DateTime StartedAt { get; set; }
+    public DateTime FinishedAt { get; set; }
 }
 
 // Instructs the compiler to generate AOT-safe JSON serialization code for the specified type during build time.
 [JsonSerializable(typeof(List<ContainerInfo>))]
+[JsonSerializable(typeof(ContainerInspect))]
 internal partial class ContainerJsonContext : JsonSerializerContext
 {
 }
