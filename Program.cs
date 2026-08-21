@@ -3,8 +3,25 @@ using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
-// Set the execution mode. True prevents actual deletion.
-bool simulateOnly = true;
+// Extract execution mode from the OS. Default to true (safe) if not specified or invalid.
+string? simEnv = Environment.GetEnvironmentVariable("SIMULATION_MODE");
+bool simulateOnly = true; 
+if (simEnv != null && bool.TryParse(simEnv, out bool simResult))
+{
+    simulateOnly = simResult;
+}
+
+// Extract inactivity threshold in days from the OS. Default to 15 if not specified or invalid.
+string? daysEnv = Environment.GetEnvironmentVariable("INACTIVITY_DAYS");
+int inactivityDays = 15;
+if (daysEnv != null && int.TryParse(daysEnv, out int daysResult))
+{
+    inactivityDays = daysResult;
+}
+
+// Log the current configuration to the terminal at startup.
+Console.WriteLine($"[CONFIG] Simulation Mode: {simulateOnly}");
+Console.WriteLine($"[CONFIG] Inactivity Limit: {inactivityDays} days\n");
 
 
 // Set the path to the Unix socket used to communicate with Docker.
@@ -95,11 +112,11 @@ foreach (var container in containers)
 Console.WriteLine();
 
 // Iterate through all deserialized containers to process stopped containers
-// that have been inactive for at least 15 days.
+// that have been inactive for at least inactivityDays days.
 foreach (var container in containers)
 {
-    // Target containers that are stopped and have at least 15 days of inactivity.
-    if (container.State == "exited" && container.TimeSinceExit >= TimeSpan.FromDays(15))
+    // Target containers that are stopped and have at least inactivityDays days of inactivity.
+    if (container.State == "exited" && container.TimeSinceExit >= TimeSpan.FromDays(inactivityDays))
     {
         if (simulateOnly)
         {
