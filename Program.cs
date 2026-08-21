@@ -19,9 +19,18 @@ if (daysEnv != null && int.TryParse(daysEnv, out int daysResult))
     inactivityDays = daysResult;
 }
 
+// Extract execution interval in hours from the OS. Default to 24.
+string? intervalEnv = Environment.GetEnvironmentVariable("RUN_INTERVAL_HOURS");
+int intervalHours = 24;
+if (intervalEnv != null && int.TryParse(intervalEnv, out int intervalResult))
+{
+    intervalHours = intervalResult;
+}
+
 // Log the current configuration to the terminal at startup.
 Console.WriteLine($"[CONFIG] Simulation Mode: {simulateOnly}");
-Console.WriteLine($"[CONFIG] Inactivity Limit: {inactivityDays} days\n");
+Console.WriteLine($"[CONFIG] Inactivity Limit: {inactivityDays} days");
+Console.WriteLine($"[CONFIG] Run Interval: {intervalHours} hours\n");
 
 
 // Set the path to the Unix socket used to communicate with Docker.
@@ -41,16 +50,16 @@ var endpoint = new UnixDomainSocketEndPoint(socketPath);
 // Create an HTTP handler with a custom connection method.
 var handler = new SocketsHttpHandler
 {
-    // Disable internal .NET proxy routing to prevent IP hijacking in minimal OS environments.
+    // Disable HTTP proxy usage for direct communication with the Docker Engine.
     UseProxy = false,
     
-    // Create a Unix socket and connects it to the Docker socket.
+    // Create a Unix socket and connect it to the Docker Engine.
     ConnectCallback = async (context, token) =>
     {
         // Create a Unix stream socket.
         var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
         
-        // Connect the socket to Docker.
+        // Connect the socket to Docker Engine.
         await socket.ConnectAsync(endpoint, token);
 
         // Convert the socket into a stream that HttpClient can use.
@@ -58,87 +67,109 @@ var handler = new SocketsHttpHandler
     }
 };
 
-// Create an HttpClient that uses the custom Docker socket connection.
-var client = new HttpClient(handler);
-
-// Set the base HTTP address used when making requests.
-client.BaseAddress = new Uri("http://127.0.0.1");
-
-// Request a list of all Docker containers, including stopped containers.
-var response = await client.GetAsync("containers/json?all=1");
-
-// Throw an exception if Docker returns an unsuccessful response.
-response.EnsureSuccessStatusCode();
-
-// Read Docker's response as a JSON string.
-var rawJson = await response.Content.ReadAsStringAsync();
-
-// Parse the JSON string into a structured list of ContainerInfo objects
-// using the compile-time generated context to guarantee AOT compatibility and prevent trimming.
-var containers = JsonSerializer.Deserialize(rawJson, ContainerJsonContext.Default.ListContainerInfo) 
-                 ?? new List<ContainerInfo>();
-
-// Iterate through all deserialized containers to calculate and display their ID, state, and inactivity time.
-foreach (var container in containers)
+// Create an HttpClient using the custom Docker socket connection
+// and set the base address for Docker Engine API requests.
+var client = new HttpClient(handler)
 {
-    ContainerInspect? inspectContainer = null;
+    BaseAddress = new Uri("http://127.0.0.1")
+};
 
-    // Target containers that exited
-    if (container.State == "exited")
+while (true)
+{
+    Console.WriteLine($"\n[EXECUTION] Starting container check at {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC...");
+    
+    try
     {
-        // Request detailed state information for the stopped container.
-        var inspectResponse = await client.GetAsync($"containers/{container.Id}/json");
+        // Request a list of all Docker containers, including stopped containers.
+        var response = await client.GetAsync("containers/json?all=1");
 
         // Throw an exception if Docker returns an unsuccessful response.
-        inspectResponse.EnsureSuccessStatusCode();
+        response.EnsureSuccessStatusCode();
 
         // Read Docker's response as a JSON string.
-        var inspectJson = await inspectResponse.Content.ReadAsStringAsync();
+        var rawJson = await response.Content.ReadAsStringAsync();
 
-        // Parse the JSON string into a structured ContainerState object
-        inspectContainer = JsonSerializer.Deserialize(inspectJson, ContainerJsonContext.Default.ContainerInspect);
+        // Deserialize the JSON response using the compile-time generated context
+        // for Native AOT and trimming compatibility.
+        var containers = JsonSerializer.Deserialize(rawJson, ContainerJsonContext.Default.ListContainerInfo) 
+                        ?? new List<ContainerInfo>();
 
-        // Skip the container if the response could not be deserialized.
-        if (inspectContainer is null) continue;
+        // Calculate and display the ID, state, and inactivity time of each container.
+        foreach (var container in containers)
+        {
+            ContainerInspect? inspectContainer = null;
 
-        // Calculate how long ago the container exited.
-        container.TimeSinceExit = DateTime.UtcNow - inspectContainer.State.FinishedAt;
+            // Inspect stopped containers to determine when they exited.
+            if (container.State == "exited")
+            {
+                // Request detailed state information for the stopped container.
+                var inspectResponse = await client.GetAsync($"containers/{container.Id}/json");
 
+                // Throw an exception if Docker returns an unsuccessful response.
+                inspectResponse.EnsureSuccessStatusCode();
+
+                // Read Docker's response as a JSON string.
+                var inspectJson = await inspectResponse.Content.ReadAsStringAsync();
+
+                // Parse the JSON string into a structured ContainerState object
+                inspectContainer = JsonSerializer.Deserialize(inspectJson, ContainerJsonContext.Default.ContainerInspect);
+
+                // Skip the container if the response could not be deserialized.
+                if (inspectContainer is null) continue;
+
+                // Calculate how long ago the container exited.
+                container.TimeSinceExit = DateTime.UtcNow - inspectContainer.State.FinishedAt;
+
+            }
+            // Display the container ID (first 12 characters), current state, and inactivity time.
+            Console.WriteLine($"ID: {container.Id.Substring(0, 12)} | State: {container.State} | Inactivity Time: {container.TimeSinceExit}");
+        }
+
+        Console.WriteLine();
+
+        // Iterate through all deserialized containers to process stopped containers
+        // that have been inactive for at least inactivityDays days.
+        foreach (var container in containers)
+        {
+            // Target containers that are stopped and have at least inactivityDays days of inactivity.
+            if (container.State == "exited" &&
+                container.TimeSinceExit.HasValue &&
+                container.TimeSinceExit >= TimeSpan.FromDays(inactivityDays))
+            {
+                if (simulateOnly)
+                {
+                    // Log the planned action without mutating the system state.
+                    Console.WriteLine($"[SIMULATION] Would delete container {container.Id.Substring(0, 12)}.");
+                }
+                else
+                {
+                    // Log the deletion of the container to the terminal.
+                    Console.WriteLine($"[EXECUTING] Deleting container {container.Id.Substring(0, 12)}...");
+
+                    // Send an HTTP DELETE request to the Docker Engine to delete the container.
+                    var deleteResponse = await client.DeleteAsync($"containers/{container.Id}");
+
+                    // Throw an exception if the Docker Engine returns an unsuccessful status code.
+                    deleteResponse.EnsureSuccessStatusCode();
+
+                    // Log the successful deletion.
+                    Console.WriteLine($"[SUCCESS] Container {container.Id.Substring(0, 12)} deleted.");
+                }
+            }
+        }
     }
-    // Display the container ID (first 12 characters), current state, and inactivity time.
-    Console.WriteLine($"ID: {container.Id.Substring(0, 12)} | State: {container.State} | Inactivity Time: {container.TimeSinceExit}");
-}
-
-Console.WriteLine();
-
-// Iterate through all deserialized containers to process stopped containers
-// that have been inactive for at least inactivityDays days.
-foreach (var container in containers)
-{
-    // Target containers that are stopped and have at least inactivityDays days of inactivity.
-    if (container.State == "exited" && container.TimeSinceExit >= TimeSpan.FromDays(inactivityDays))
+    catch (Exception ex)
     {
-        if (simulateOnly)
-        {
-            // Log the planned action without mutating the system state.
-            Console.WriteLine($"[SIMULATION] Would delete container {container.Id.Substring(0, 12)}.");
-        }
-        else
-        {
-            // Log the imminent destruction of the container to the terminal.
-            Console.WriteLine($"[EXECUTING] Deleting container {container.Id.Substring(0, 12)}...");
-
-            // Send an HTTP DELETE request to the Docker Engine to delete the container.
-            var deleteResponse = await client.DeleteAsync($"containers/{container.Id}");
-
-            // Throw an exception if the Docker Engine returns an unsuccessful status code.
-            deleteResponse.EnsureSuccessStatusCode();
-
-            // Log the successful destruction.
-            Console.WriteLine($"[SUCCESS] Container {container.Id.Substring(0, 12)} deleted.");
-        }
+        // Fail-safe: catch execution errors so the agent can continue with the next cycle.
+        Console.WriteLine($"[ERROR] Operation failed: {ex.Message}");
     }
+
+    Console.WriteLine($"[SYSTEM] Container check complete. Waiting {intervalHours} hours until the next cycle.");
+    
+    // Wait asynchronously until the next execution cycle without blocking a thread.
+    await Task.Delay(TimeSpan.FromHours(intervalHours));
 }
+
 
 public class ContainerInfo
 {
