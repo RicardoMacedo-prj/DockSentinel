@@ -7,3 +7,6 @@
 *.user
 *.suo
 .DS_Store
+
+# Ignore local environment variables
+.env

@@ -1,0 +1,12 @@
+services:
+  agent:
+    build: .
+    image: docksentinel-agent:latest
+    container_name: docksentinel-agent
+    restart: unless-stopped
+    environment:
+      - SIMULATION_MODE=${SIMULATION_MODE:-true}
+      - INACTIVITY_DAYS=${INACTIVITY_DAYS:-15}
+      - RUN_INTERVAL_HOURS=${RUN_INTERVAL_HOURS:-24}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
