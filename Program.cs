@@ -11,6 +11,14 @@ if (simEnv != null && bool.TryParse(simEnv, out bool simResult))
     simulateOnly = simResult;
 }
 
+// Extract volume removal preference from the OS. Default to false if not specified or invalid.
+string? deleteEnv = Environment.GetEnvironmentVariable("REMOVE_VOLUMES");
+bool removeVolumes = false;
+if (deleteEnv != null && bool.TryParse(deleteEnv, out bool volumesResult))
+{
+    removeVolumes = volumesResult;
+}
+
 // Extract inactivity threshold in days from the OS. Default to 15 if not specified or invalid.
 string? daysEnv = Environment.GetEnvironmentVariable("INACTIVITY_DAYS");
 int inactivityDays = 15;
@@ -30,7 +38,8 @@ if (intervalEnv != null && int.TryParse(intervalEnv, out int intervalResult) && 
 // Log the current configuration to the terminal at startup.
 Console.WriteLine($"[CONFIG] Simulation Mode: {simulateOnly}");
 Console.WriteLine($"[CONFIG] Inactivity Limit: {inactivityDays} days");
-Console.WriteLine($"[CONFIG] Run Interval: {intervalHours} hours\n");
+Console.WriteLine($"[CONFIG] Run Interval: {intervalHours} hours");
+Console.WriteLine($"[CONFIG] Remove Volumes: {removeVolumes}\n");
 
 
 // Set the path to the Unix socket used to communicate with Docker.
@@ -172,7 +181,7 @@ while (!cancellationTokenSource.Token.IsCancellationRequested)
                     container.State == "exited" &&
                     container.TimeSinceExit.HasValue &&
                     container.TimeSinceExit >= TimeSpan.FromDays(inactivityDays))
-                {;
+                {
 
                     if (simulateOnly)
                     {
@@ -184,10 +193,15 @@ while (!cancellationTokenSource.Token.IsCancellationRequested)
                         // Log the deletion of the container to the terminal.
                         Console.WriteLine($"[EXECUTING] Deleting container {container.DisplayName}...");
 
-                        // Send an HTTP DELETE request to the Docker Engine to delete the container.
-                        var deleteResponse = await client.DeleteAsync($"containers/{container.DisplayName}");
+                        // Send an HTTP DELETE request to the Docker Engine to delete the container and 
+                        // its associated resources if removeVolumes is true. 
+                        // Otherwise, delete only the container.
+                        var deleteUrl = removeVolumes
+                            ? $"containers/{container.DisplayName}?v=true"
+                            : $"containers/{container.DisplayName}";
 
-                        // Throw an exception if the Docker Engine returns an unsuccessful status code.
+                        var deleteResponse = await client.DeleteAsync(deleteUrl);
+                        
                         try
                         {
                             deleteResponse.EnsureSuccessStatusCode();
