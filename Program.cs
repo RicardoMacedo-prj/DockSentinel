@@ -112,12 +112,10 @@ while (!cancellationTokenSource.Token.IsCancellationRequested)
             var containers = await JsonSerializer.DeserializeAsync(jsonStream, ContainerJsonContext.Default.ListContainerInfo) 
                             ?? new List<ContainerInfo>();
 
-            // Calculate and display the ID, state, and inactivity time of each container.
+            // Calculate and display the display name, state, and inactivity time of each container.
             foreach (var container in containers)
             {
                 if (container is null) continue; // Skip null container entries
-
-                var containerPrintId = container.Id.Length >= 12 ? container.Id.Substring(0, 12) : container.Id;
 
                 ContainerInspect? inspectContainer = null;
 
@@ -125,7 +123,7 @@ while (!cancellationTokenSource.Token.IsCancellationRequested)
                 if (container.State == "exited")
                 {
                     // Request detailed state information for the stopped container.
-                    var inspectResponse = await client.GetAsync($"containers/{container.Id}/json");
+                    var inspectResponse = await client.GetAsync($"containers/{container.DisplayName}/json");
 
                     // Throw an exception if Docker returns an unsuccessful response.
                     try
@@ -134,7 +132,7 @@ while (!cancellationTokenSource.Token.IsCancellationRequested)
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine($"[ERROR] Failed to inspect container {containerPrintId}: {ex.Message}");
+                        Console.WriteLine($"[ERROR] Failed to inspect container {container.DisplayName}: {ex.Message}");
                         continue; // Skip to the next container if inspection fails
                     }
 
@@ -158,8 +156,9 @@ while (!cancellationTokenSource.Token.IsCancellationRequested)
                     }
 
                 }
-                // Display the container ID (first 12 characters), current state, and inactivity time.
-                Console.WriteLine($"ID: {containerPrintId} | State: {container.State} | Inactivity Time: {container.TimeSinceExit}");
+                // Display the container Display Name, current state, and inactivity time.
+                Console.WriteLine($"ID: {container.DisplayName} | State: {container.State} | " + 
+                    $"Inactivity Time: {(container.TimeSinceExit.HasValue ? $"{container.TimeSinceExit.Value.TotalDays:F2} days" : "N/A")}");
             }
 
             Console.WriteLine();
@@ -173,21 +172,20 @@ while (!cancellationTokenSource.Token.IsCancellationRequested)
                     container.State == "exited" &&
                     container.TimeSinceExit.HasValue &&
                     container.TimeSinceExit >= TimeSpan.FromDays(inactivityDays))
-                {
-                var containerPrintId = container.Id.Length >= 12 ? container.Id.Substring(0, 12) : container.Id;
+                {;
 
                     if (simulateOnly)
                     {
                         // Log the planned action without mutating the system state.
-                        Console.WriteLine($"[SIMULATION] Would delete container {containerPrintId}.");
+                        Console.WriteLine($"[SIMULATION] Would delete container {container.DisplayName}.");
                     }
                     else
                     {
                         // Log the deletion of the container to the terminal.
-                        Console.WriteLine($"[EXECUTING] Deleting container {containerPrintId}...");
+                        Console.WriteLine($"[EXECUTING] Deleting container {container.DisplayName}...");
 
                         // Send an HTTP DELETE request to the Docker Engine to delete the container.
-                        var deleteResponse = await client.DeleteAsync($"containers/{container.Id}");
+                        var deleteResponse = await client.DeleteAsync($"containers/{container.DisplayName}");
 
                         // Throw an exception if the Docker Engine returns an unsuccessful status code.
                         try
@@ -196,12 +194,12 @@ while (!cancellationTokenSource.Token.IsCancellationRequested)
                         }
                         catch (Exception ex)
                         {
-                            Console.WriteLine($"[ERROR] Failed to delete container {containerPrintId}: {ex.Message}");
+                            Console.WriteLine($"[ERROR] Failed to delete container {container.DisplayName}: {ex.Message}");
                             continue; // Skip to the next container if deletion fails
                         }
 
                         // Log the successful deletion.
-                        Console.WriteLine($"[SUCCESS] Container {containerPrintId} deleted.");
+                        Console.WriteLine($"[SUCCESS] Container {container.DisplayName} deleted.");
                     }
                 }
             }
@@ -235,6 +233,8 @@ public class ContainerInfo
 {
     public string Id {get; set; } = string.Empty;
     public string State {get; set; } = string.Empty;
+    public List<string> Names {get; set; } = new();
+    public string DisplayName => Names.Count > 0 ? Names[0].TrimStart('/'): Id;
 
     [JsonIgnore]
     public TimeSpan? TimeSinceExit { get; set; }
