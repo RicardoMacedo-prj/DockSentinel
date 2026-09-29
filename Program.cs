@@ -209,7 +209,7 @@ while (!cancellationTokenSource.Token.IsCancellationRequested)
                         catch (Exception ex)
                         {
                             Console.WriteLine($"[ERROR] Failed to delete container {container.DisplayName}: {ex.Message}");
-                            continue;
+                            continue; // Skip to the next container if deletion fails
                         }
 
                         // Log the successful deletion.
