@@ -35,12 +35,24 @@ if (intervalEnv != null && int.TryParse(intervalEnv, out int intervalResult) && 
     intervalHours = intervalResult;
 }
 
+// Extract ignored container names from the OS. Default to an empty set if not specified.
+string? ignoreEnv = Environment.GetEnvironmentVariable("IGNORE_CONTAINERS");
+var ignoredContainers = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+if (!string.IsNullOrWhiteSpace(ignoreEnv))
+{
+    var names = ignoreEnv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    foreach (var name in names)
+    {
+        ignoredContainers.Add(name);
+    }
+}
+
 // Log the current configuration to the terminal at startup.
 Console.WriteLine($"[CONFIG] Simulation Mode: {simulateOnly}");
 Console.WriteLine($"[CONFIG] Inactivity Limit: {inactivityDays} days");
 Console.WriteLine($"[CONFIG] Run Interval: {intervalHours} hours");
 Console.WriteLine($"[CONFIG] Remove Volumes: {removeVolumes}\n");
-
+Console.WriteLine($"[CONFIG] Ignored Containers: {(ignoredContainers.Count > 0 ? string.Join(", ", ignoredContainers) : "None")}\n");
 
 // Set the path to the Unix socket used to communicate with Docker.
 var socketPath = "/var/run/docker.sock";
@@ -198,6 +210,12 @@ while (!cancellationTokenSource.Token.IsCancellationRequested)
                     container.TimeSinceExit.HasValue &&
                     container.TimeSinceExit >= TimeSpan.FromDays(inactivityDays))
                 {
+                    // Skip containers that are explicitly ignored by label or name.
+                    if (container.IsIgnoredByLabel || ignoredContainers.Contains(container.DisplayName))
+                    {
+                        Console.WriteLine($"[INFO] Skipping ignored container {container.DisplayName}.");
+                        continue;
+                    }
 
                     if (simulateOnly)
                     {
@@ -270,6 +288,11 @@ public class ContainerInfo
     public string State {get; set; } = string.Empty;
     public List<string> Names {get; set; } = new();
     public string DisplayName => Names.Count > 0 ? Names[0].TrimStart('/'): Id;
+    public Dictionary<string, string> Labels {get; set; } = new();
+
+    [JsonIgnore]
+    public bool IsIgnoredByLabel => Labels.TryGetValue("docksentinel.ignore", out var val) &&
+        val.Equals("true", StringComparison.OrdinalIgnoreCase);
 
     [JsonIgnore]
     public TimeSpan? TimeSinceExit { get; set; }
