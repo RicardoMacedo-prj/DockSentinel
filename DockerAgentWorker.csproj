@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PublishAOT>true</PublishAOT>
+    <DefaultItemExcludes>$(DefaultItemExcludes);DockerAgentWorker.Tests/**</DefaultItemExcludes>
   </PropertyGroup>
 
 </Project>
