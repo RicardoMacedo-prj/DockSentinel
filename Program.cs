@@ -80,7 +80,8 @@ var handler = new SocketsHttpHandler
 // and set the base address for Docker Engine API requests.
 var client = new HttpClient(handler)
 {
-    BaseAddress = new Uri("http://127.0.0.1")
+    BaseAddress = new Uri("http://127.0.0.1"),
+    Timeout = TimeSpan.FromSeconds(30)
 };
 
 // Create a cancellation token source to allow for graceful shutdowns.
@@ -103,15 +104,30 @@ while (!cancellationTokenSource.Token.IsCancellationRequested)
     
     try
     {
-        // Request a list of all Docker containers, including stopped containers.
-        var response = await client.GetAsync("containers/json?all=1");
+        HttpResponseMessage? response = null;
 
-        // Throw an exception if Docker returns an unsuccessful response.
-        if (!response.IsSuccessStatusCode)
+        // Request a list of all Docker containers, including stopped containers, with a retry 
+        // mechanism to handle potential Docker Engine startup delays or transient network issues.
+        for (int attempt = 1; attempt <= 3; attempt++)
         {
-            Console.WriteLine($"[ERROR] Failed to retrieve container list: {response.StatusCode}");
+            try
+            {
+                response = await client.GetAsync("containers/json?all=1", cancellationTokenSource.Token);
+                if (response.IsSuccessStatusCode)
+                {
+                    break; // Exit the retry loop if the request is successful
+                }
+                Console.WriteLine($"[WARN] Docker Engine not ready (attempt {attempt}/3): {response.StatusCode}");
+            }
+            catch (Exception ex) when (attempt < 3 && !cancellationTokenSource.Token.IsCancellationRequested)
+            {
+                Console.WriteLine($"[WARN] Attempt {attempt}/3 failed: {ex.Message}. Retrying in 5 seconds...");   
+            } 
+            await Task.Delay(TimeSpan.FromSeconds(5), cancellationTokenSource.Token);
         }
-        else
+
+        // Process the response if the request is successful.
+        if (response != null && response.IsSuccessStatusCode)
         {
             // Read Docker's response as a JSON string.
             await using var jsonStream = await response.Content.ReadAsStreamAsync();
@@ -132,7 +148,7 @@ while (!cancellationTokenSource.Token.IsCancellationRequested)
                 if (container.State == "exited")
                 {
                     // Request detailed state information for the stopped container.
-                    var inspectResponse = await client.GetAsync($"containers/{container.DisplayName}/json");
+                    var inspectResponse = await client.GetAsync($"containers/{container.DisplayName}/json", cancellationTokenSource.Token);
 
                     // Throw an exception if Docker returns an unsuccessful response.
                     try
@@ -200,7 +216,7 @@ while (!cancellationTokenSource.Token.IsCancellationRequested)
                             ? $"containers/{container.DisplayName}?v=true"
                             : $"containers/{container.DisplayName}";
 
-                        var deleteResponse = await client.DeleteAsync(deleteUrl);
+                        var deleteResponse = await client.DeleteAsync(deleteUrl, cancellationTokenSource.Token);
                         
                         try
                         {
@@ -217,6 +233,11 @@ while (!cancellationTokenSource.Token.IsCancellationRequested)
                     }
                 }
             }
+        }
+        else
+        {
+            // Log the failure to retrieve the container list.
+            Console.WriteLine($"[ERROR] Failed to retrieve container list after 3 attempts: {response?.StatusCode}.");
         }
         
     }
