@@ -4,6 +4,8 @@ services:
     image: docksentinel-agent:latest
     container_name: docksentinel-agent
     restart: unless-stopped
+    group_add:
+      - keep-groups
     environment:
       - SIMULATION_MODE=${SIMULATION_MODE:-true}
       - REMOVE_VOLUMES=${REMOVE_VOLUMES:-false}

@@ -23,5 +23,8 @@ COPY --from=build /app/publish/DockerAgentWorker .
 # Set execution rights for the native binary.
 RUN chmod +x /app/DockerAgentWorker
 
+# Create a non-root user for running the application.
+USER $APP_UID
+
 # Define the entrypoint binary.
 ENTRYPOINT ["/app/DockerAgentWorker"]
