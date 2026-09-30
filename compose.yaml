@@ -9,5 +9,6 @@ services:
       - REMOVE_VOLUMES=${REMOVE_VOLUMES:-false}
       - INACTIVITY_DAYS=${INACTIVITY_DAYS:-15}
       - RUN_INTERVAL_HOURS=${RUN_INTERVAL_HOURS:-24}
+      - IGNORE_CONTAINERS=${IGNORE_CONTAINERS:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
